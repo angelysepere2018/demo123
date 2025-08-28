@@ -1,0 +1,314 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Kiwi the Parrot – Seeds Game</title>
+  <style>
+    :root{
+      --bg:#e7f8ff;
+      --sky:#bfe9ff;
+      --ground:#d8f3dc;
+      --ui:#0f172a;
+      --accent:#16a34a;
+    }
+    *{box-sizing:border-box}
+    html,body{height:100%;margin:0}
+    body{
+      display:grid;
+      place-items:center;
+      background:linear-gradient(180deg,var(--sky) 0%, var(--bg) 40%);
+      font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,Apple Color Emoji,Segoe UI Emoji;
+      color:var(--ui);
+    }
+    .wrap{width:min(960px,100%);padding:12px}
+    header{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:8px}
+    h1{font-size:clamp(20px,3.4vw,28px);margin:0;display:flex;gap:8px;align-items:center}
+    h1 span{font-size:1.1em}
+    .panel{display:flex;gap:12px;align-items:center;flex-wrap:wrap}
+    .btn{border:none;border-radius:999px;padding:10px 14px;font-weight:700;background:#fff;box-shadow:0 2px 6px rgba(0,0,0,.08);cursor:pointer}
+    .btn:hover{transform:translateY(-1px)}
+    .hud{display:flex;gap:18px;align-items:center}
+    .tag{background:#fff;border-radius:999px;padding:6px 10px;box-shadow:0 2px 6px rgba(0,0,0,.08);}
+    canvas{width:100%;height:auto;border-radius:16px;box-shadow:0 8px 30px rgba(0,0,0,.15);background:#c2f2ff}
+    .controls{display:grid;grid-template-columns:repeat(3,64px);grid-template-rows:repeat(2,64px);gap:10px;justify-content:center;margin-top:10px;user-select:none}
+    .dpad button{width:64px;height:64px;border-radius:14px;border:none;background:#ffffffcc;backdrop-filter: blur(6px);box-shadow:0 2px 8px rgba(0,0,0,.12);font-size:24px}
+    .dpad{display:none}
+    @media (max-width:700px){.dpad{display:grid}}
+    .small{opacity:.8;font-size:.92rem}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <h1>🦜 Kiwi the Parrot <span>– snack time!</span></h1>
+      <div class="panel">
+        <button class="btn" id="startBtn">▶️ Start</button>
+        <button class="btn" id="pauseBtn">⏸️ Pause</button>
+        <button class="btn" id="resetBtn">🔄 Reset</button>
+      </div>
+      <div class="hud">
+        <div class="tag" id="scoreTag">Score: 0</div>
+        <div class="tag" id="timerTag">Time: 60</div>
+        <div class="tag" id="livesTag">Lives: 3</div>
+      </div>
+    </header>
+
+    <canvas id="game" width="960" height="540" aria-label="Kiwi the Parrot Seeds game" role="img"></canvas>
+
+    <div class="dpad controls" aria-hidden="false">
+      <div></div>
+      <button id="up">⬆️</button>
+      <div></div>
+      <button id="left">⬅️</button>
+      <button id="down">⬇️</button>
+      <button id="right">➡️</button>
+    </div>
+
+    <p class="small">Desktop: arrow keys or WASD to move. Mobile: use the on‑screen arrows. Help Kiwi eat seeds (🌰) to score. Avoid chili peppers (🌶️)! Catch a star (⭐) for bonus.
+    </p>
+  </div>
+
+  <script>
+  (()=>{
+    const canvas = document.getElementById('game');
+    const ctx = canvas.getContext('2d');
+
+    // Handle high-DPI screens
+    function fitHiDPI(){
+      const ratio = window.devicePixelRatio || 1;
+      const cssW = canvas.clientWidth;
+      const cssH = Math.round(cssW*9/16);
+      canvas.style.height = cssH+'px';
+      canvas.width = Math.round(cssW*ratio);
+      canvas.height = Math.round(cssH*ratio);
+      ctx.setTransform(ratio,0,0,ratio,0,0);
+    }
+    new ResizeObserver(fitHiDPI).observe(canvas);
+    fitHiDPI();
+
+    // Game state
+    const G = {
+      running:false,
+      paused:false,
+      time:60,
+      last:0,
+      score:0,
+      lives:3,
+      seeds:[],
+      hazards:[],
+      sparkles:[],
+      spawnSeedCd:0,
+      spawnHazCd:0,
+      spawnStarCd:10,
+    };
+
+    const keys = new Set();
+    const pressed = {ArrowUp:false,ArrowDown:false,ArrowLeft:false,ArrowRight:false,KeyW:false,KeyA:false,KeyS:false,KeyD:false};
+
+    // Kiwi (player)
+    const player = {
+      x: canvas.width/2/ (window.devicePixelRatio||1),
+      y: canvas.height/2/ (window.devicePixelRatio||1),
+      r: 20,
+      speed: 240,
+      vx:0, vy:0,
+      emoji:'🦜',
+      name:'Kiwi'
+    };
+
+    // UI elements
+    const scoreTag = document.getElementById('scoreTag');
+    const timerTag = document.getElementById('timerTag');
+    const livesTag = document.getElementById('livesTag');
+
+    // Events
+    window.addEventListener('keydown', (e)=>{ if(pressed[e.code]!==undefined){ pressed[e.code]=true; e.preventDefault(); } });
+    window.addEventListener('keyup', (e)=>{ if(pressed[e.code]!==undefined){ pressed[e.code]=false; e.preventDefault(); } });
+
+    // Touch controls
+    const mapBtn = {
+      up:  ()=> pressed.ArrowUp=true,
+      down:()=> pressed.ArrowDown=true,
+      left:()=> pressed.ArrowLeft=true,
+      right:()=> pressed.ArrowRight=true,
+    };
+    const mapUp = {
+      up:  ()=> pressed.ArrowUp=false,
+      down:()=> pressed.ArrowDown=false,
+      left:()=> pressed.ArrowLeft=false,
+      right:()=> pressed.ArrowRight=false,
+    };
+    ['up','down','left','right'].forEach(id=>{
+      const b = document.getElementById(id);
+      ['pointerdown','mousedown','touchstart'].forEach(ev=> b.addEventListener(ev, (e)=>{ mapBtn[id](); e.preventDefault(); }));
+      ['pointerup','mouseup','mouseleave','touchend','touchcancel'].forEach(ev=> b.addEventListener(ev, (e)=>{ mapUp[id](); e.preventDefault(); }));
+    });
+
+    // Helpers
+    const rand = (a,b)=> Math.random()*(b-a)+a;
+    const clamp=(v,a,b)=> Math.max(a, Math.min(b,v));
+    const dist=(x1,y1,x2,y2)=> Math.hypot(x1-x2,y1-y2);
+
+    function reset(){
+      G.running=false; G.paused=false; G.time=60; G.score=0; G.lives=3;
+      G.seeds.length=0; G.hazards.length=0; G.sparkles.length=0; G.spawnSeedCd=0; G.spawnHazCd=0; G.spawnStarCd=10;
+      player.x = canvas.width/2/ (window.devicePixelRatio||1);
+      player.y = canvas.height*0.7/ (window.devicePixelRatio||1);
+    }
+
+    function start(){ if(!G.running){ G.running=true; G.paused=false; G.last=performance.now(); loop(G.last);} }
+    function pause(){ G.paused = !G.paused; }
+
+    document.getElementById('startBtn').onclick = start;
+    document.getElementById('pauseBtn').onclick = ()=>{ pause(); };
+    document.getElementById('resetBtn').onclick = ()=>{ reset(); draw(0); };
+
+    // Entities
+    function spawnSeed(){
+      G.seeds.push({x:rand(20, canvas.width/(window.devicePixelRatio||1)-20), y:-20, r:14, vy:rand(60,120), emoji:'🌰', score:10});
+    }
+    function spawnHazard(){
+      G.hazards.push({x:rand(20, canvas.width/(window.devicePixelRatio||1)-20), y:-20, r:16, vy:rand(90,150), emoji:'🌶️'});
+    }
+    function spawnStar(){
+      // bonus star that drifts
+      const dir = Math.random()<.5? -1:1;
+      G.seeds.push({x: dir<0 ? canvas.width/(window.devicePixelRatio||1)+20 : -20, y:rand(80, 260), r:16, vy:0, vx:dir*rand(90,130), emoji:'⭐', score:30});
+    }
+
+    function eatFX(x,y){
+      for(let i=0;i<8;i++){
+        G.sparkles.push({x,y, vx:rand(-80,80), vy:rand(-140,-40), g:320, life:0.6});
+      }
+    }
+
+    function update(dt){
+      if(!G.running || G.paused) return;
+
+      // timer
+      G.time -= dt; if(G.time < 0){ G.time = 0; gameOver(); }
+
+      // move player
+      const up = pressed.ArrowUp || pressed.KeyW;
+      const dn = pressed.ArrowDown || pressed.KeyS;
+      const lf = pressed.ArrowLeft || pressed.KeyA;
+      const rt = pressed.ArrowRight || pressed.KeyD;
+      let ax = (rt?1:0) - (lf?1:0);
+      let ay = (dn?1:0) - (up?1:0);
+      const mag = Math.hypot(ax,ay) || 1;
+      ax/=mag; ay/=mag;
+      player.vx = ax * player.speed;
+      player.vy = ay * player.speed;
+      player.x = clamp(player.x + player.vx*dt, player.r, canvas.width/(window.devicePixelRatio||1)-player.r);
+      player.y = clamp(player.y + player.vy*dt, player.r, canvas.height/(window.devicePixelRatio||1)-player.r);
+
+      // spawn logic
+      G.spawnSeedCd -= dt; if(G.spawnSeedCd<=0){ spawnSeed(); G.spawnSeedCd = rand(0.4,0.9); }
+      G.spawnHazCd  -= dt; if(G.spawnHazCd<=0){ spawnHazard(); G.spawnHazCd = rand(1.3,2.4); }
+      G.spawnStarCd -= dt; if(G.spawnStarCd<=0){ spawnStar(); G.spawnStarCd = rand(8,14); }
+
+      // update seeds and hazards
+      for(const s of G.seeds){ s.y += (s.vy||0)*dt; if(s.vx) s.x += s.vx*dt; }
+      for(const h of G.hazards){ h.y += h.vy*dt; }
+
+      // remove offscreen
+      G.seeds = G.seeds.filter(s=> s.y < canvas.height/(window.devicePixelRatio||1)+30 && s.x>-40 && s.x<canvas.width/(window.devicePixelRatio||1)+40);
+      G.hazards = G.hazards.filter(h=> h.y < canvas.height/(window.devicePixelRatio||1)+30);
+
+      // collisions
+      for(let i=G.seeds.length-1;i>=0;i--){
+        const s = G.seeds[i];
+        if(dist(player.x,player.y,s.x,s.y) < player.r + s.r){
+          G.score += s.score;
+          eatFX(s.x,s.y);
+          G.seeds.splice(i,1);
+        }
+      }
+      for(let i=G.hazards.length-1;i>=0;i--){
+        const h = G.hazards[i];
+        if(dist(player.x,player.y,h.x,h.y) < player.r + h.r){
+          G.hazards.splice(i,1);
+          G.lives -= 1;
+          screenShake(10);
+          if(G.lives<=0){ gameOver(); }
+        }
+      }
+
+      // sparkles
+      for(const p of G.sparkles){
+        p.vy += p.g*dt; p.x += p.vx*dt; p.y += p.vy*dt; p.life -= dt;
+      }
+      G.sparkles = G.sparkles.filter(p=> p.life>0);
+
+      // Update HUD
+      scoreTag.textContent = `Score: ${G.score}`;
+      timerTag.textContent = `Time: ${Math.ceil(G.time)}`;
+      livesTag.textContent = `Lives: ${G.lives}`;
+    }
+
+    // Simple screen shake
+    let shakeTime=0, shakeMag=0;
+    function screenShake(mag){ shakeTime = 0.25; shakeMag = mag; }
+
+    // Rendering
+    function draw(){
+      const w = canvas.width/(window.devicePixelRatio||1);
+      const h = canvas.height/(window.devicePixelRatio||1);
+
+      // shake offset
+      let ox=0, oy=0; if(shakeTime>0){ ox = rand(-shakeMag,shakeMag); oy = rand(-shakeMag,shakeMag); shakeTime -= 1/60; }
+
+      ctx.save();
+      ctx.clearRect(0,0,canvas.width,canvas.height);
+
+      // sky and ground
+      const grd = ctx.createLinearGradient(0,0,0,h);
+      grd.addColorStop(0,'#b9f3ff');
+      grd.addColorStop(1,'#dfffe6');
+      ctx.fillStyle = grd;
+      ctx.fillRect(0,0,w,h);
+
+      // ground line
+      ctx.fillStyle = '#a7f3d0';
+      ctx.fillRect(0,h-60,w,60);
+
+      ctx.translate(ox,oy);
+
+      // seeds
+      ctx.font = '24px Apple Color Emoji, Segoe UI Emoji, Noto Color Emoji, system-ui';
+      ctx.textAlign='center'; ctx.textBaseline='middle';
+      for(const s of G.seeds){ ctx.fillText(s.emoji, s.x, s.y); }
+      for(const hzd of G.hazards){ ctx.fillText(hzd.emoji, hzd.x, hzd.y); }
+
+      // Kiwi (draw a slightly bobbing emoji with a shadow)
+      const bob = Math.sin(performance.now()/200)*2;
+      ctx.globalAlpha = 0.25; ctx.beginPath(); ctx.ellipse(player.x, player.y+player.r+6, player.r*0.9, 6, 0, 0, Math.PI*2); ctx.fillStyle='#000'; ctx.fill(); ctx.globalAlpha=1;
+      ctx.font = '32px Apple Color Emoji, Segoe UI Emoji, Noto Color Emoji, system-ui';
+      ctx.fillText(player.emoji, player.x, player.y+bob);
+
+      // sparkles
+      ctx.globalAlpha = 0.9;
+      for(const p of G.sparkles){ ctx.fillText('✨', p.x, p.y); }
+      ctx.globalAlpha = 1;
+
+      // overlays
+      if(!G.running){
+        drawCenterText('🦜 Kiwi is hungry!','Press Start to Play');
+      } else if(G.paused){
+        drawCenterText('Paused','Press Pause to Resume');
+      } else if(G.time<=0 || G.lives<=0){
+        drawCenterText(`Game Over – Score ${G.score}`, 'Press Reset to help Kiwi try again');
+      }
+
+      ctx.restore();
+    }
+
+    function drawCenterText(title, subtitle){
+      const w = canvas.width/(window.devicePixelRatio||1);
+      const h = canvas.height/(window.devicePixelRatio||1);
+      ctx.fillStyle='rgba(255,255,255,.85)';
+      ctx.fillRect(w*0.1,h*0.28,w*0.8, h*0.28);
+      ctx.strokeStyle='rgba(0,0,0,.08)';
+      ctx.lineWidth=2; ctx.strokeRect(w*0.1,h*0.28,w*0.8, h*0.28);
+
